@@ -577,15 +577,38 @@ def create_fluid_dropdown():
     """Create fluid selection dropdown options"""
     return ["Select Fluid Library..."] + list(FLUID_LIBRARY.keys())
 
+import streamlit as st
+import streamlit.components.v1 as components
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import plotly.express as px
+import plotly.graph_objects as go
+import math
+import base64
+import tempfile
+import os
+from datetime import datetime
+from fpdf import FPDF
+from io import BytesIO
+import requests
+from PIL import Image
+
+# ... [ALL THE CONSTANTS, CLASSES AND FUNCTIONS BEFORE scenario_input_form REMAIN UNCHANGED] ...
+
 def scenario_input_form(scenario_num, scenario_data=None):
     """Create input form for a scenario"""
     # Initialize all variables with default values
-    sg = 1.0
-    visc = 1.0
-    pv = 0.023
-    k = 1.4
-    rho = 1.0
+    default_values = {
+        "sg": 1.0,
+        "visc": 1.0,
+        "pv": 0.023,
+        "k": 1.4,
+        "rho": 1.0,
+        "fluid_type": "liquid"
+    }
     
+    # Initialize scenario_data with defaults if not provided
     if scenario_data is None:
         scenario_data = {
             "name": f"Scenario {scenario_num}",
@@ -594,20 +617,15 @@ def scenario_input_form(scenario_num, scenario_data=None):
             "p1": 10.0,
             "p2": 6.0,
             "temp": 20.0,
-            "sg": sg,
-            "visc": visc,
-            "pv": pv,
-            "k": k,
-            "rho": rho,
             "pipe_d": 2.0
         }
+        # Merge with default values
+        scenario_data = {**default_values, **scenario_data}
     else:
         # Ensure we have all keys defined
-        sg = scenario_data.get("sg", 1.0)
-        visc = scenario_data.get("visc", 1.0)
-        pv = scenario_data.get("pv", 0.023)
-        k = scenario_data.get("k", 1.4)
-        rho = scenario_data.get("rho", 1.0)
+        for key, default in default_values.items():
+            if key not in scenario_data:
+                scenario_data[key] = default
     
     st.subheader(f"Scenario {scenario_num}")
     
@@ -638,6 +656,29 @@ def scenario_input_form(scenario_num, scenario_data=None):
             index=index_val,
             key=f"fluid_type_{scenario_num}"
         ).lower()
+    
+    # Handle fluid library selection BEFORE other properties
+    if fluid_library != "Select Fluid Library...":
+        fluid_data = FLUID_LIBRARY[fluid_library]
+        
+        # Update fluid type in scenario data
+        scenario_data["fluid_type"] = fluid_data["type"]
+        
+        # Update properties
+        if fluid_data["sg"] is not None:
+            scenario_data["sg"] = fluid_data["sg"]
+        if fluid_data["visc"] is not None:
+            scenario_data["visc"] = fluid_data["visc"]
+        if fluid_data["k"] is not None:
+            scenario_data["k"] = fluid_data["k"]
+        
+        # Calculate vapor pressure if applicable
+        if fluid_data["pv_func"] and fluid_data["type"] == "liquid":
+            scenario_data["pv"] = fluid_data["pv_func"](scenario_data["temp"])
+        
+        # Calculate density for steam
+        if fluid_data["type"] == "steam":
+            scenario_data["rho"] = calculate_density("steam", scenario_data["temp"], scenario_data["p1"])
     
     # Parameters
     col1, col2 = st.columns(2)
@@ -689,7 +730,7 @@ def scenario_input_form(scenario_num, scenario_data=None):
                 "Specific Gravity (water=1)" if fluid_type == "liquid" else "Specific Gravity (air=1)",
                 min_value=0.01, 
                 max_value=10.0, 
-                value=sg, 
+                value=scenario_data["sg"], 
                 step=0.01,
                 key=f"sg_{scenario_num}"
             )
@@ -699,7 +740,7 @@ def scenario_input_form(scenario_num, scenario_data=None):
                 "Viscosity (cSt)", 
                 min_value=0.01, 
                 max_value=10000.0, 
-                value=visc, 
+                value=scenario_data["visc"], 
                 step=0.1,
                 key=f"visc_{scenario_num}"
             )
@@ -710,22 +751,23 @@ def scenario_input_form(scenario_num, scenario_data=None):
                     "Vapor Pressure (bar a)", 
                     min_value=0.0, 
                     max_value=100.0, 
-                    value=pv, 
+                    value=scenario_data["pv"], 
                     step=0.0001,
                     format="%.4f",
                     key=f"pv_{scenario_num}"
                 )
             with btn_col:
                 if st.button("Calculate", key=f"calc_pv_{scenario_num}"):
-                    pv = calculate_vapor_pressure(temp)
-                    st.session_state[f"pv_{scenario_num}"] = pv
+                    # Calculate and store in temporary key
+                    st.session_state[f"temp_pv_{scenario_num}"] = calculate_vapor_pressure(temp)
+                    st.rerun()
         
         if fluid_type in ["gas", "steam"]:
             k = st.number_input(
                 "Specific Heat Ratio (k=Cp/Cv)", 
                 min_value=1.0, 
                 max_value=2.0, 
-                value=k, 
+                value=scenario_data["k"], 
                 step=0.01,
                 key=f"k_{scenario_num}"
             )
@@ -737,14 +779,15 @@ def scenario_input_form(scenario_num, scenario_data=None):
                     "Density (kg/m³)", 
                     min_value=0.01, 
                     max_value=2000.0, 
-                    value=rho, 
+                    value=scenario_data["rho"], 
                     step=0.1,
                     key=f"rho_{scenario_num}"
                 )
             with btn_col:
                 if st.button("Calculate", key=f"calc_rho_{scenario_num}"):
-                    rho = calculate_density("steam", temp, p1)
-                    st.session_state[f"rho_{scenario_num}"] = rho
+                    # Calculate and store in temporary key
+                    st.session_state[f"temp_rho_{scenario_num}"] = calculate_density("steam", temp, p1)
+                    st.rerun()
         
         pipe_d = st.number_input(
             "Pipe Diameter (inch)", 
@@ -755,33 +798,16 @@ def scenario_input_form(scenario_num, scenario_data=None):
             key=f"pipe_d_{scenario_num}"
         )
     
-    # Handle fluid library selection
-    if fluid_library != "Select Fluid Library...":
-        fluid_data = FLUID_LIBRARY[fluid_library]
-        
-        # Set fluid type
-        fluid_type = fluid_data["type"]
-        st.session_state[f"fluid_type_{scenario_num}"] = fluid_type.capitalize()
-        
-        # Set properties
-        if fluid_data["sg"] is not None:
-            st.session_state[f"sg_{scenario_num}"] = fluid_data["sg"]
-        if fluid_data["visc"] is not None:
-            st.session_state[f"visc_{scenario_num}"] = fluid_data["visc"]
-        if fluid_data["k"] is not None:
-            st.session_state[f"k_{scenario_num}"] = fluid_data["k"]
-        
-        # Calculate vapor pressure if applicable
-        if fluid_data["pv_func"] and fluid_data["type"] == "liquid":
-            pv = fluid_data["pv_func"](temp)
-            st.session_state[f"pv_{scenario_num}"] = pv
-        
-        # Calculate density for steam
-        if fluid_data["type"] == "steam":
-            density = calculate_density("steam", temp, p1)
-            st.session_state[f"rho_{scenario_num}"] = density
+    # Handle temporary calculated values after rerun
+    if f"temp_pv_{scenario_num}" in st.session_state:
+        pv = st.session_state[f"temp_pv_{scenario_num}"]
+        del st.session_state[f"temp_pv_{scenario_num}"]  # Clean up
     
-    # Return scenario data
+    if f"temp_rho_{scenario_num}" in st.session_state:
+        rho = st.session_state[f"temp_rho_{scenario_num}"]
+        del st.session_state[f"temp_rho_{scenario_num}"]  # Clean up
+    
+    # Return updated scenario data
     return {
         "name": scenario_name,
         "fluid_type": fluid_type,
@@ -789,11 +815,11 @@ def scenario_input_form(scenario_num, scenario_data=None):
         "p1": p1,
         "p2": p2,
         "temp": temp,
-        "sg": sg,
-        "visc": visc,
-        "pv": pv,
-        "k": k,
-        "rho": rho,
+        "sg": sg if fluid_type in ["liquid", "gas"] else scenario_data["sg"],
+        "visc": visc if fluid_type == "liquid" else scenario_data["visc"],
+        "pv": pv if fluid_type == "liquid" else scenario_data["pv"],
+        "k": k if fluid_type in ["gas", "steam"] else scenario_data["k"],
+        "rho": rho if fluid_type == "steam" else scenario_data["rho"],
         "pipe_d": pipe_d
     }
 
