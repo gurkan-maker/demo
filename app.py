@@ -579,6 +579,13 @@ def create_fluid_dropdown():
 
 def scenario_input_form(scenario_num, scenario_data=None):
     """Create input form for a scenario"""
+    # Initialize all variables with default values
+    sg = 1.0
+    visc = 1.0
+    pv = 0.023
+    k = 1.4
+    rho = 1.0
+    
     if scenario_data is None:
         scenario_data = {
             "name": f"Scenario {scenario_num}",
@@ -587,13 +594,20 @@ def scenario_input_form(scenario_num, scenario_data=None):
             "p1": 10.0,
             "p2": 6.0,
             "temp": 20.0,
-            "sg": 1.0,
-            "visc": 1.0,
-            "pv": 0.023,
-            "k": 1.4,
-            "rho": 1.0,
+            "sg": sg,
+            "visc": visc,
+            "pv": pv,
+            "k": k,
+            "rho": rho,
             "pipe_d": 2.0
         }
+    else:
+        # Ensure we have all keys defined
+        sg = scenario_data.get("sg", 1.0)
+        visc = scenario_data.get("visc", 1.0)
+        pv = scenario_data.get("pv", 0.023)
+        k = scenario_data.get("k", 1.4)
+        rho = scenario_data.get("rho", 1.0)
     
     st.subheader(f"Scenario {scenario_num}")
     
@@ -612,11 +626,16 @@ def scenario_input_form(scenario_num, scenario_data=None):
         )
     
     with col2:
-        # Fluid type selection
+        # Fluid type selection - use try/except to prevent index errors
+        try:
+            index_val = ["Liquid", "Gas", "Steam"].index(scenario_data["fluid_type"].capitalize())
+        except (ValueError, AttributeError):
+            index_val = 0
+        
         fluid_type = st.selectbox(
             "Fluid Type", 
             ["Liquid", "Gas", "Steam"], 
-            index=["liquid", "gas", "steam"].index(scenario_data["fluid_type"]),
+            index=index_val,
             key=f"fluid_type_{scenario_num}"
         ).lower()
     
@@ -670,7 +689,7 @@ def scenario_input_form(scenario_num, scenario_data=None):
                 "Specific Gravity (water=1)" if fluid_type == "liquid" else "Specific Gravity (air=1)",
                 min_value=0.01, 
                 max_value=10.0, 
-                value=scenario_data["sg"], 
+                value=sg, 
                 step=0.01,
                 key=f"sg_{scenario_num}"
             )
@@ -680,7 +699,7 @@ def scenario_input_form(scenario_num, scenario_data=None):
                 "Viscosity (cSt)", 
                 min_value=0.01, 
                 max_value=10000.0, 
-                value=scenario_data["visc"], 
+                value=visc, 
                 step=0.1,
                 key=f"visc_{scenario_num}"
             )
@@ -691,7 +710,7 @@ def scenario_input_form(scenario_num, scenario_data=None):
                     "Vapor Pressure (bar a)", 
                     min_value=0.0, 
                     max_value=100.0, 
-                    value=scenario_data["pv"], 
+                    value=pv, 
                     step=0.0001,
                     format="%.4f",
                     key=f"pv_{scenario_num}"
@@ -706,7 +725,7 @@ def scenario_input_form(scenario_num, scenario_data=None):
                 "Specific Heat Ratio (k=Cp/Cv)", 
                 min_value=1.0, 
                 max_value=2.0, 
-                value=scenario_data["k"], 
+                value=k, 
                 step=0.01,
                 key=f"k_{scenario_num}"
             )
@@ -718,7 +737,7 @@ def scenario_input_form(scenario_num, scenario_data=None):
                     "Density (kg/m³)", 
                     min_value=0.01, 
                     max_value=2000.0, 
-                    value=scenario_data["rho"], 
+                    value=rho, 
                     step=0.1,
                     key=f"rho_{scenario_num}"
                 )
@@ -770,11 +789,11 @@ def scenario_input_form(scenario_num, scenario_data=None):
         "p1": p1,
         "p2": p2,
         "temp": temp,
-        "sg": sg if fluid_type in ["liquid", "gas"] else 1.0,
-        "visc": visc if fluid_type == "liquid" else 0.0,
-        "pv": pv if fluid_type == "liquid" else 0.0,
-        "k": k if fluid_type in ["gas", "steam"] else 1.0,
-        "rho": rho if fluid_type == "steam" else 0.0,
+        "sg": sg,
+        "visc": visc,
+        "pv": pv,
+        "k": k,
+        "rho": rho,
         "pipe_d": pipe_d
     }
 
@@ -972,7 +991,7 @@ def main():
     with st.sidebar:
         # Logo uploader
         st.header("VASTAŞ Logo")
-        logo_upload = st.file_uploader("Upload New VASTAŞ logo", type=["png", "jpg", "jpeg"], key="logo_uploader")
+        logo_upload = st.file_uploader("Upload VASTAŞ logo", type=["png", "jpg", "jpeg"], key="logo_uploader")
         
         if logo_upload is not None:
             # Save uploaded logo to local file
@@ -988,7 +1007,7 @@ def main():
         elif os.path.exists("logo.png"):
             st.image(Image.open("logo.png"), use_container_width=True)
         else:
-            st.image("https://via.placeholder.com/300x100?text=Company+Logo", use_container_width=True)
+            st.image("https://via.placeholder.com/300x100?text=VASTAŞ+Logo", use_container_width=True)
         
         st.header("Valve Selection")
         
