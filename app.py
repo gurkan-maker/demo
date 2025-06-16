@@ -971,8 +971,8 @@ def main():
     # Sidebar for valve selection and actions
     with st.sidebar:
         # Logo uploader
-        st.header("Company Logo")
-        logo_upload = st.file_uploader("Upload company logo", type=["png", "jpg", "jpeg"], key="logo_uploader")
+        st.header("VASTAŞ Logo")
+        logo_upload = st.file_uploader("Upload New VASTAŞ logo", type=["png", "jpg", "jpeg"], key="logo_uploader")
         
         if logo_upload is not None:
             # Save uploaded logo to local file
