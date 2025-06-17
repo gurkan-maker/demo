@@ -406,12 +406,17 @@ class PDFReport(FPDF):
             self.ln()
 
 def generate_pdf_report(scenarios, valve, op_points, req_cvs, warnings, cavitation_info, plot_path=None, logo_path=None):
-    if not hasattr(plotly.io, "_kaleido"):
-        import plotly.io as pio
-        pio.kaleido.scope.mathjax = None  # Disable MathJax for better performance
     """Generate a PDF report with sizing results"""
     pdf = PDFReport(logo_path)
     pdf.add_page()
+    # Add UTF-8 compatible font
+    try:
+        pdf.add_font('DejaVu', '', 'DejaVuSansCondensed.ttf', uni=True)
+        pdf.set_font('DejaVu', '', 10)
+    except:
+        pdf.set_font('Arial', '', 10)
+    
+    # Rest of your function remains the same...
     
     # Report title and metadata
     pdf.chapter_title('Project Information')
