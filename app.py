@@ -409,15 +409,7 @@ def generate_pdf_report(scenarios, valve, op_points, req_cvs, warnings, cavitati
     """Generate a PDF report with sizing results"""
     pdf = PDFReport(logo_path)
     pdf.add_page()
-    # Add UTF-8 compatible font
-    try:
-        pdf.add_font('DejaVu', '', 'DejaVuSansCondensed.ttf', uni=True)
-        pdf.set_font('DejaVu', '', 10)
-    except:
-        pdf.set_font('Arial', '', 10)
-    
-    # Rest of your function remains the same...
-    
+  
     # Report title and metadata
     pdf.chapter_title('Project Information')
     pdf.cell(0, 10, f'Project: Valve Sizing Analysis', 0, 1)
