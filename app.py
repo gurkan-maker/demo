@@ -406,6 +406,9 @@ class PDFReport(FPDF):
             self.ln()
 
 def generate_pdf_report(scenarios, valve, op_points, req_cvs, warnings, cavitation_info, plot_path=None, logo_path=None):
+    if not hasattr(plotly.io, "_kaleido"):
+        import plotly.io as pio
+        pio.kaleido.scope.mathjax = None  # Disable MathJax for better performance
     """Generate a PDF report with sizing results"""
     pdf = PDFReport(logo_path)
     pdf.add_page()
