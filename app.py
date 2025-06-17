@@ -518,11 +518,10 @@ def generate_pdf_report(scenarios, valve, op_points, req_cvs, warnings, cavitati
         pdf.chapter_title('Valve Cv Characteristic Curve')
         pdf.image(plot_path, x=10, w=180)
     
-    # Save the PDF to a BytesIO object
-    pdf_bytes = BytesIO()
-    pdf.output(pdf_bytes)
-    pdf_bytes.seek(0)
-    return pdf_bytes
+# Replace the end of your function with:
+output_path = f"valve_sizing_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+pdf.output(output_path)
+return output_path
 
 # ========================
 # SIMULATION RESULTS
