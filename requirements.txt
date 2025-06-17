@@ -6,3 +6,4 @@ plotly
 fpdf
 Pillow
 requests
+kaleido==0.2.1
