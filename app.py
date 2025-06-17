@@ -352,28 +352,23 @@ def check_cavitation(p1: float, p2: float, pv: float, fl: float) -> tuple:
 # ========================
 # PDF REPORT GENERATION
 # ========================
+from fpdf import FPDF
+import os
+from datetime import datetime
+from io import BytesIO
+
 class PDFReport(FPDF):
     def __init__(self, logo_path=None):
         super().__init__()
         self.logo_path = logo_path
         self.set_auto_page_break(auto=True, margin=15)
-        # Add a Unicode-compatible font (Arial Unicode MS or DejaVuSans)
-        try:
-            self.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
-            self.add_font('DejaVu', 'B', 'DejaVuSans-Bold.ttf', uni=True)
-            self.default_font = 'DejaVu'
-        except:
-            # Fallback to Arial if DejaVu not available
-            self.add_font('Arial', '', 'arial.ttf', uni=True)
-            self.add_font('Arial', 'B', 'arialbd.ttf', uni=True)
-            self.default_font = 'Arial'
+        
     def header(self):
         # Logo
         if self.logo_path and os.path.exists(self.logo_path):
             self.image(self.logo_path, x=10, y=8, w=30)
         
         # Title
-        self.set_font(self.default_font, 'B', 16)
         self.set_font('Arial', 'B', 16)
         self.cell(0, 10, 'Control Valve Sizing Report', 0, 1, 'C')
         self.set_font('Arial', 'B', 10)
@@ -454,13 +449,13 @@ def generate_pdf_report(scenarios, valve, op_points, req_cvs, warnings, cavitati
         margin = (actual_cv / req_cvs[i] - 1) * 100 if req_cvs[i] > 0 else 0
         
         results_data.append([
-            scenario["name"],
+            scenario['name'],
             f"{req_cvs[i]:.1f}",
             f"{valve.size}\"",
             f"{op_points[i]:.1f}%",
             f"{actual_cv:.1f}",
             f"{margin:.1f}%",
-            warnings[i] + (" " + cavitation_info[i] if cavitation_info[i] else "")
+            warnings[i] + (" + " + cavitation_info[i] if cavitation_info[i] else "")
         ])
     
     pdf.add_table(
@@ -472,36 +467,40 @@ def generate_pdf_report(scenarios, valve, op_points, req_cvs, warnings, cavitati
     pdf.chapter_title('Detailed Calculations')
     for i, scenario in enumerate(scenarios):
         pdf.set_font('Arial', 'B', 10)
-        pdf.cell(0, 10, f'Scenario {i+1}: {scenario["name"]}', 0, 1)
+        pdf.cell(0, 10, f"Scenario {i+1}: {scenario['name']}", 0, 1)
         pdf.set_font('Arial', '', 10)
         
+        # Replace Unicode delta symbol with "Delta P" for latin-1 compatibility
         calc_text = (
             f"Fluid Type: {scenario['fluid_type'].title()}\n"
             f"Flow Rate: {scenario['flow']} "
-            f"{'m³/h' if scenario['fluid_type']=='liquid' else 'kg/h' if scenario['fluid_type']=='steam' else 'std m³/h'}\n"
+            f"{'m3/h' if scenario['fluid_type']=='liquid' else 'kg/h' if scenario['fluid_type']=='steam' else 'std m3/h'}\n"
             f"Inlet Pressure (P1): {scenario['p1']:.2f} bar a\n"
             f"Outlet Pressure (P2): {scenario['p2']:.2f} bar a\n"
-            f"Pressure Drop (ΔP): {scenario['p1'] - scenario['p2']:.2f} bar\n"
+            f"Pressure Drop (Delta P): {scenario['p1'] - scenario['p2']:.2f} bar\n"
             f"Temperature: {scenario['temp']}°C\n"
         )
         
-        if scenario["fluid_type"] == "liquid":
+        if scenario['fluid_type'] == 'liquid':
             calc_text += (
                 f"Specific Gravity: {scenario['sg']:.3f}\n"
                 f"Viscosity: {scenario['visc']} cSt\n"
                 f"Vapor Pressure: {scenario['pv']:.4f} bar a\n"
                 f"Cavitation Status: {cavitation_info[i]}\n"
             )
-        elif scenario["fluid_type"] == "gas":
+        elif scenario['fluid_type'] == 'gas':
             calc_text += (
                 f"Specific Gravity (air=1): {scenario['sg']:.3f}\n"
                 f"Specific Heat Ratio (k): {scenario['k']:.3f}\n"
             )
         else:  # steam
             calc_text += (
-                f"Density: {scenario['rho']:.3f} kg/m³\n"
+                f"Density: {scenario['rho']:.3f} kg/m3\n"
                 f"Specific Heat Ratio (k): {scenario['k']:.3f}\n"
             )
+        
+        actual_cv = valve.get_cv_at_opening(op_points[i])
+        margin = (actual_cv / req_cvs[i] - 1) * 100 if req_cvs[i] > 0 else 0
         
         calc_text += (
             f"Pipe Diameter: {scenario['pipe_d']} in\n"
