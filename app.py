@@ -357,13 +357,23 @@ class PDFReport(FPDF):
         super().__init__()
         self.logo_path = logo_path
         self.set_auto_page_break(auto=True, margin=15)
-        
+        # Add a Unicode-compatible font (Arial Unicode MS or DejaVuSans)
+        try:
+            self.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
+            self.add_font('DejaVu', 'B', 'DejaVuSans-Bold.ttf', uni=True)
+            self.default_font = 'DejaVu'
+        except:
+            # Fallback to Arial if DejaVu not available
+            self.add_font('Arial', '', 'arial.ttf', uni=True)
+            self.add_font('Arial', 'B', 'arialbd.ttf', uni=True)
+            self.default_font = 'Arial'
     def header(self):
         # Logo
         if self.logo_path and os.path.exists(self.logo_path):
             self.image(self.logo_path, x=10, y=8, w=30)
         
         # Title
+        self.set_font(self.default_font, 'B', 16)
         self.set_font('Arial', 'B', 16)
         self.cell(0, 10, 'Control Valve Sizing Report', 0, 1, 'C')
         self.set_font('Arial', 'B', 10)
