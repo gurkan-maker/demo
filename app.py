@@ -14,8 +14,8 @@ from fpdf import FPDF
 from io import BytesIO
 import requests
 from PIL import Image
-import traceback  # Added for error handling
-import kaleido  # Required for Plotly image export
+import traceback
+import kaleido
 
 # ========================
 # CONSTANTS & UNIT CONVERSION
@@ -399,8 +399,13 @@ class PDFReport(FPDF):
         # Logo
         if self.logo_bytes and self.logo_type:
             try:
-                # Use BytesIO to pass image bytes directly
-                self.image(self.logo_bytes, x=10, y=8, w=30, type=self.logo_type)
+                # Use temp file to avoid BytesIO issue
+                with tempfile.NamedTemporaryFile(delete=False, suffix=f".{self.logo_type.lower()}") as tmpfile:
+                    tmpfile.write(self.logo_bytes)
+                    tmpfile_path = tmpfile.name
+                
+                self.image(tmpfile_path, x=10, y=8, w=30)
+                os.unlink(tmpfile_path)  # Clean up temp file
             except Exception as e:
                 self.cell(0, 10, f"Logo error: {str(e)}", 0, 1)
         
@@ -553,10 +558,9 @@ def generate_pdf_report(scenarios, valve, op_points, req_cvs, warnings, cavitati
             pdf.image(plot_bytes, x=10, w=180, type='PNG')
         except Exception as e:
             pdf.cell(0, 10, f"Failed to insert plot: {str(e)}", 0, 1)
-    
-    # Save the PDF to a BytesIO object
-    pdf_bytes = BytesIO()
-    pdf.output(pdf_bytes)
+    # Save the PDF to a BytesIO object - FIXED
+    pdf_string = pdf.output(dest='S').encode('latin1')
+    pdf_bytes = BytesIO(pdf_string)
     pdf_bytes.seek(0)
     return pdf_bytes
 
