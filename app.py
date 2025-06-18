@@ -554,10 +554,19 @@ def generate_pdf_report(scenarios, valve, op_points, req_cvs, warnings, cavitati
     if plot_bytes:
         pdf.chapter_title('Valve Cv Characteristic Curve')
         try:
-            # Pass plot bytes directly to PDF
-            pdf.image(plot_bytes, x=10, w=180, type='PNG')
+            # Create temporary file for plot
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_plot:
+                tmp_plot.write(plot_bytes)
+                tmp_plot_path = tmp_plot.name
+            
+            # Pass file path to PDF
+            pdf.image(tmp_plot_path, x=10, w=180)
+            
+            # Clean up temporary file
+            os.unlink(tmp_plot_path)
         except Exception as e:
             pdf.cell(0, 10, f"Failed to insert plot: {str(e)}", 0, 1)
+    
     # Save the PDF to a BytesIO object - FIXED
     pdf_string = pdf.output(dest='S').encode('latin1')
     pdf_bytes = BytesIO(pdf_string)
