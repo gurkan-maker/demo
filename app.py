@@ -352,11 +352,6 @@ def check_cavitation(p1: float, p2: float, pv: float, fl: float) -> tuple:
 # ========================
 # PDF REPORT GENERATION
 # ========================
-from fpdf import FPDF
-import os
-from datetime import datetime
-from io import BytesIO
-
 class PDFReport(FPDF):
     def __init__(self, logo_path=None):
         super().__init__()
@@ -411,7 +406,7 @@ class PDFReport(FPDF):
             self.ln()
 
 def generate_pdf_report(scenarios, valve, op_points, req_cvs, warnings, cavitation_info, plot_path=None, logo_path=None):
-    """Generate a PDF report with sizing results"""
+    """Generate a PDF report with sizing results and return as bytes"""
     pdf = PDFReport(logo_path)
     pdf.add_page()
   
@@ -518,10 +513,9 @@ def generate_pdf_report(scenarios, valve, op_points, req_cvs, warnings, cavitati
         pdf.chapter_title('Valve Cv Characteristic Curve')
         pdf.image(plot_path, x=10, w=180)
     
-    # Replace the end of your function with:
-    output_path = f"valve_sizing_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-    pdf.output(output_path)
-    return output_path
+    # Generate PDF in memory and return bytes
+    pdf_bytes = pdf.output(dest='S').encode('latin-1')
+    return pdf_bytes
 
 # ========================
 # SIMULATION RESULTS
@@ -584,25 +578,6 @@ def create_valve_dropdown():
 def create_fluid_dropdown():
     """Create fluid selection dropdown options"""
     return ["Select Fluid Library..."] + list(FLUID_LIBRARY.keys())
-
-import streamlit as st
-import streamlit.components.v1 as components
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import plotly.express as px
-import plotly.graph_objects as go
-import math
-import base64
-import tempfile
-import os
-from datetime import datetime
-from fpdf import FPDF
-from io import BytesIO
-import requests
-from PIL import Image
-
-# ... [ALL THE CONSTANTS, CLASSES AND FUNCTIONS BEFORE scenario_input_form REMAIN UNCHANGED] ...
 
 def scenario_input_form(scenario_num, scenario_data=None):
     """Create input form for a scenario"""
@@ -1324,31 +1299,38 @@ def main():
         elif os.path.exists("logo.png"):
             logo_path = "logo.png"
         
-        # Generate PDF
-        pdf_bytes = generate_pdf_report(
-            st.session_state.scenarios,
-            st.session_state.results["valve"],
-            st.session_state.results["op_points"],
-            st.session_state.results["req_cvs"],
-            st.session_state.results["warnings"],
-            st.session_state.results["cavitation_info"],
-            plot_path,
-            logo_path
-        )
+        # Generate PDF bytes
+        try:
+            pdf_bytes = generate_pdf_report(
+                st.session_state.scenarios,
+                st.session_state.results["valve"],
+                st.session_state.results["op_points"],
+                st.session_state.results["req_cvs"],
+                st.session_state.results["warnings"],
+                st.session_state.results["cavitation_info"],
+                plot_path,
+                logo_path
+            )
+        finally:
+            # Clean up temporary file
+            try:
+                os.remove(plot_path)
+            except:
+                pass
+        
+        # Create a timestamp for the filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"valve_sizing_report_{timestamp}.pdf"
         
         # Download button
         st.sidebar.download_button(
             label="Download PDF Report",
             data=pdf_bytes,
-            file_name=f"valve_sizing_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+            file_name=filename,
             mime="application/pdf"
         )
         
-        # Clean up temporary file
-        try:
-            os.remove(plot_path)
-        except:
-            pass
+        st.sidebar.success("PDF report generated successfully!")
 
 if __name__ == "__main__":
     main()
