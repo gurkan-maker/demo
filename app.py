@@ -389,16 +389,18 @@ def check_cavitation(p1: float, p2: float, pv: float, fl: float) -> tuple:
 # PDF REPORT GENERATION
 # ========================
 class PDFReport(FPDF):
-    def __init__(self, logo_path=None):
+    def __init__(self, logo_bytes=None, logo_type=None):
         super().__init__()
-        self.logo_path = logo_path
+        self.logo_bytes = logo_bytes
+        self.logo_type = logo_type
         self.set_auto_page_break(auto=True, margin=15)
         
     def header(self):
         # Logo
-        if self.logo_path and os.path.exists(self.logo_path):
+        if self.logo_bytes and self.logo_type:
             try:
-                self.image(self.logo_path, x=10, y=8, w=30)
+                # Use BytesIO to pass image bytes directly
+                self.image(self.logo_bytes, x=10, y=8, w=30, type=self.logo_type)
             except Exception as e:
                 self.cell(0, 10, f"Logo error: {str(e)}", 0, 1)
         
@@ -444,9 +446,9 @@ class PDFReport(FPDF):
                 self.cell(col_widths[i], 6, str(item), 1)
             self.ln()
 
-def generate_pdf_report(scenarios, valve, op_points, req_cvs, warnings, cavitation_info, plot_bytes=None, logo_path=None):
+def generate_pdf_report(scenarios, valve, op_points, req_cvs, warnings, cavitation_info, plot_bytes=None, logo_bytes=None, logo_type=None):
     """Generate a PDF report with sizing results"""
-    pdf = PDFReport(logo_path)
+    pdf = PDFReport(logo_bytes=logo_bytes, logo_type=logo_type)
     pdf.add_page()
     
     # Report title and metadata
@@ -546,12 +548,9 @@ def generate_pdf_report(scenarios, valve, op_points, req_cvs, warnings, cavitati
     # Add the Cv curve plot if available
     if plot_bytes:
         pdf.chapter_title('Valve Cv Characteristic Curve')
-        temp_plot_path = "temp_plot.png"
-        with open(temp_plot_path, "wb") as f:
-            f.write(plot_bytes)
         try:
-            pdf.image(temp_plot_path, x=10, w=180)
-            os.remove(temp_plot_path)
+            # Pass plot bytes directly to PDF
+            pdf.image(plot_bytes, x=10, w=180, type='PNG')
         except Exception as e:
             pdf.cell(0, 10, f"Failed to insert plot: {str(e)}", 0, 1)
     
@@ -1068,8 +1067,10 @@ def main():
         st.session_state.valve = None
     if 'scenarios' not in st.session_state:
         st.session_state.scenarios = None
-    if 'logo_path' not in st.session_state:
-        st.session_state.logo_path = None
+    if 'logo_bytes' not in st.session_state:
+        st.session_state.logo_bytes = None
+    if 'logo_type' not in st.session_state:
+        st.session_state.logo_type = None
     if 'show_simulation' not in st.session_state:
         st.session_state.show_simulation = False
     if 'show_3d_viewer' not in st.session_state:
@@ -1097,16 +1098,14 @@ def main():
         logo_upload = st.file_uploader("Upload VASTAŞ logo", type=["png", "jpg", "jpeg"], key="logo_uploader")
         
         if logo_upload is not None:
-            # Save uploaded logo to local file
-            logo_bytes = logo_upload.getvalue()
-            with open("user_logo.png", "wb") as f:
-                f.write(logo_bytes)
-            st.session_state.logo_path = "user_logo.png"
+            # Store logo bytes and type
+            st.session_state.logo_bytes = logo_upload.getvalue()
+            st.session_state.logo_type = "PNG"  # Assume PNG for simplicity
             st.success("Logo uploaded successfully!")
         
         # Display logo in sidebar
-        if st.session_state.logo_path and os.path.exists(st.session_state.logo_path):
-            st.image(Image.open(st.session_state.logo_path), use_container_width=True)
+        if st.session_state.logo_bytes:
+            st.image(Image.open(BytesIO(st.session_state.logo_bytes)), use_container_width=True)
         elif os.path.exists("logo.png"):
             st.image(Image.open("logo.png"), use_container_width=True)
         else:
@@ -1441,13 +1440,6 @@ def main():
             )
             plot_bytes = fig.to_image(format="png")
             
-            # Determine logo path
-            logo_path = None
-            if st.session_state.logo_path and os.path.exists(st.session_state.logo_path):
-                logo_path = st.session_state.logo_path
-            elif os.path.exists("logo.png"):
-                logo_path = "logo.png"
-            
             # Generate PDF
             pdf_bytes = generate_pdf_report(
                 st.session_state.scenarios,
@@ -1457,7 +1449,8 @@ def main():
                 st.session_state.results["warnings"],
                 st.session_state.results["cavitation_info"],
                 plot_bytes,
-                logo_path
+                st.session_state.logo_bytes,
+                st.session_state.logo_type
             )
             
             # Download button
