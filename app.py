@@ -14,6 +14,8 @@ from fpdf import FPDF
 from io import BytesIO
 import requests
 from PIL import Image
+import traceback  # Added for error handling
+import kaleido  # Required for Plotly image export
 
 # ========================
 # CONSTANTS & UNIT CONVERSION
@@ -45,7 +47,7 @@ FLUID_LIBRARY = {
         "sg": 1.0,
         "visc": 1.0,  # cSt at 20°C
         "k": None,
-        "pv_func": None
+        "pv_func": lambda t: calculate_vapor_pressure(t)
     },
     "Light Oil": {
         "type": "liquid",
@@ -150,15 +152,15 @@ def calculate_kinematic_viscosity(fluid: str, temp_c: float) -> float:
 # ========================
 class Valve:
     def __init__(self, size_inch: int, rating_class: int, cv_table: dict, 
-                 fl: float, xt: float, fd: float = 1.0, d_inch: float = None,
+                 fl: float, xt_table: dict, fd_table: dict, d_inch: float = None,
                  valve_type: int = 3):  # 3=globe, 4=axial
         self.size = size_inch
         self.rating_class = rating_class
         self.cv_table = cv_table  # {open%: Cv}
         self.fl = fl  # Liquid pressure recovery factor
-        self.xt = xt  # Pressure drop ratio factor
-        self.fd = fd  # Valve style modifier (typically 0.7-1.0)
-        self.diameter = d_inch if d_inch else size_inch * 0.9  # Approximate internal diameter
+        self.xt = xt_table  # Pressure drop ratio factor
+        self.fd = fd_table  # Valve style modifier (typically 0.7-1.0)
+        self.diameter = d_inch if d_inch else size_inch * 0.95  # Approximate internal diameter
         self.valve_type = valve_type  # 3=globe, 4=axial
         
     def get_cv_at_opening(self, open_percent: float) -> float:
@@ -177,7 +179,7 @@ class Valve:
         if open_percent <= keys[0]:
             return self.cv_table[keys[0]]
         return self.cv_table[keys[-1]]
-
+    
 # Comprehensive valve database with new naming format
 VALVE_DATABASE = [
     # Globe valves (valve_type=3)
@@ -204,7 +206,7 @@ VALVE_DATABASE = [
 ]
 
 # ========================
-# CV CALCULATION MODULE
+# CV CALCULATION MODULE (ENHANCED)
 # ========================
 def reynolds_number(flow_m3h: float, d_m: float, visc_cst: float) -> float:
     """Calculate Reynolds number for viscosity correction"""
@@ -231,7 +233,7 @@ def calculate_piping_factor_fp(valve_d: float, pipe_d: float) -> float:
     return math.sqrt(1 + 0.5 * (1 - ratio**2))
 
 def cv_liquid(flow: float, p1: float, p2: float, sg: float, fl: float, pv: float, 
-              visc_cst: float, d_m: float, fp: float = 1.0) -> float:
+              visc_cst: float, d_m: float, fp: float = 1.0) -> tuple:
     """
     Calculate Cv for liquids (ISA-75.01.01) with viscosity correction
     
@@ -247,28 +249,38 @@ def cv_liquid(flow: float, p1: float, p2: float, sg: float, fl: float, pv: float
         fp: Piping geometry factor
     
     Returns:
-        Required Cv
+        (required_cv, theoretical_cv, details_dict)
     """
     dp = p1 - p2
     dp_max = fl**2 * (p1 - pv)  # Choking pressure drop
     
-    # Initial Cv calculation
+    # Theoretical Cv calculation (without corrections)
     if dp < dp_max:  # Non-choked flow
-        cv_initial = flow * math.sqrt(sg / dp)
+        theoretical_cv = flow * math.sqrt(sg / dp)
     else:  # Choked flow
-        cv_initial = flow * math.sqrt(sg) / (fl * math.sqrt(p1 - pv))
+        theoretical_cv = flow * math.sqrt(sg) / (fl * math.sqrt(p1 - pv))
     
     # Apply piping factor
-    cv_initial /= fp
+    cv_after_fp = theoretical_cv / fp
     
     # Viscosity correction
     rev = reynolds_number(flow, d_m, visc_cst)
     fr = viscosity_correction(rev)
+    corrected_cv = cv_after_fp / fr
     
-    return cv_initial / fr
+    # Return both theoretical and corrected Cv with details
+    details = {
+        'theoretical_cv': theoretical_cv,
+        'fp': fp,
+        'fr': fr,
+        'reynolds': rev,
+        'is_choked': (dp >= dp_max)
+    }
+    
+    return corrected_cv, details
 
 def cv_gas(flow: float, p1: float, p2: float, sg: float, t: float, k: float, 
-           xt: float, fp: float = 1.0) -> float:
+           xt: float, fp: float = 1.0) -> tuple:
     """
     Calculate Cv for gases (ISA-75.01.01)
     
@@ -283,23 +295,35 @@ def cv_gas(flow: float, p1: float, p2: float, sg: float, t: float, k: float,
         fp: Piping geometry factor
     
     Returns:
-        Required Cv
+        (corrected_cv, details_dict)
     """
     t_k = t + C_TO_K
     x = (p1 - p2) / p1
     fk = k / 1.4  # Specific heat ratio factor
+    is_choked = False
     
     if x >= fk * xt:  # Choked flow
         y = 0.667  # Expansion factor limit
         x = fk * xt
+        is_choked = True
     else:  # Non-choked flow
         y = 1 - x / (3 * fk * xt)
     
-    cv_val = (flow / N9) * math.sqrt((sg * t_k) / (x * p1**2)) / y
-    return cv_val / fp
+    # Theoretical Cv without corrections
+    theoretical_cv = (flow / N9) * math.sqrt((sg * t_k) / (x * p1**2)) / y
+    corrected_cv = theoretical_cv / fp
+    
+    details = {
+        'theoretical_cv': theoretical_cv,
+        'fp': fp,
+        'expansion_factor': y,
+        'is_choked': is_choked
+    }
+    
+    return corrected_cv, details
 
 def cv_steam(flow: float, p1: float, p2: float, rho: float, k: float, 
-             xt: float, fp: float = 1.0) -> float:
+             xt: float, fp: float = 1.0) -> tuple:
     """
     Calculate Cv for steam (ISA-75.01.01)
     
@@ -313,19 +337,31 @@ def cv_steam(flow: float, p1: float, p2: float, rho: float, k: float,
         fp: Piping geometry factor
     
     Returns:
-        Required Cv
+        (corrected_cv, details_dict)
     """
     x = (p1 - p2) / p1
     fk = k / 1.4
+    is_choked = False
     
     if x >= fk * xt:  # Choked flow
         y = 0.667
         x = fk * xt
+        is_choked = True
     else:  # Non-choked flow
         y = 1 - x / (3 * fk * xt)
     
-    cv_val = flow / (N6 * y * math.sqrt(x * p1 * rho))
-    return cv_val / fp
+    # Theoretical Cv without corrections
+    theoretical_cv = flow / (N6 * y * math.sqrt(x * p1 * rho))
+    corrected_cv = theoretical_cv / fp
+    
+    details = {
+        'theoretical_cv': theoretical_cv,
+        'fp': fp,
+        'expansion_factor': y,
+        'is_choked': is_choked
+    }
+    
+    return corrected_cv, details
 
 def check_cavitation(p1: float, p2: float, pv: float, fl: float) -> tuple:
     """
@@ -361,7 +397,10 @@ class PDFReport(FPDF):
     def header(self):
         # Logo
         if self.logo_path and os.path.exists(self.logo_path):
-            self.image(self.logo_path, x=10, y=8, w=30)
+            try:
+                self.image(self.logo_path, x=10, y=8, w=30)
+            except Exception as e:
+                self.cell(0, 10, f"Logo error: {str(e)}", 0, 1)
         
         # Title
         self.set_font('Arial', 'B', 16)
@@ -405,11 +444,11 @@ class PDFReport(FPDF):
                 self.cell(col_widths[i], 6, str(item), 1)
             self.ln()
 
-def generate_pdf_report(scenarios, valve, op_points, req_cvs, warnings, cavitation_info, plot_path=None, logo_path=None):
-    """Generate a PDF report with sizing results and return as bytes"""
+def generate_pdf_report(scenarios, valve, op_points, req_cvs, warnings, cavitation_info, plot_bytes=None, logo_path=None):
+    """Generate a PDF report with sizing results"""
     pdf = PDFReport(logo_path)
     pdf.add_page()
-  
+    
     # Report title and metadata
     pdf.chapter_title('Project Information')
     pdf.cell(0, 10, f'Project: Valve Sizing Analysis', 0, 1)
@@ -444,13 +483,13 @@ def generate_pdf_report(scenarios, valve, op_points, req_cvs, warnings, cavitati
         margin = (actual_cv / req_cvs[i] - 1) * 100 if req_cvs[i] > 0 else 0
         
         results_data.append([
-            scenario['name'],
+            scenario["name"],
             f"{req_cvs[i]:.1f}",
             f"{valve.size}\"",
             f"{op_points[i]:.1f}%",
             f"{actual_cv:.1f}",
             f"{margin:.1f}%",
-            warnings[i] + (" + " + cavitation_info[i] if cavitation_info[i] else "")
+            warnings[i] + (" " + cavitation_info[i] if cavitation_info[i] else "")
         ])
     
     pdf.add_table(
@@ -462,40 +501,36 @@ def generate_pdf_report(scenarios, valve, op_points, req_cvs, warnings, cavitati
     pdf.chapter_title('Detailed Calculations')
     for i, scenario in enumerate(scenarios):
         pdf.set_font('Arial', 'B', 10)
-        pdf.cell(0, 10, f"Scenario {i+1}: {scenario['name']}", 0, 1)
+        pdf.cell(0, 10, f'Scenario {i+1}: {scenario["name"]}', 0, 1)
         pdf.set_font('Arial', '', 10)
         
-        # Replace Unicode delta symbol with "Delta P" for latin-1 compatibility
         calc_text = (
             f"Fluid Type: {scenario['fluid_type'].title()}\n"
             f"Flow Rate: {scenario['flow']} "
-            f"{'m3/h' if scenario['fluid_type']=='liquid' else 'kg/h' if scenario['fluid_type']=='steam' else 'std m3/h'}\n"
+            f"{'m³/h' if scenario['fluid_type']=='liquid' else 'kg/h' if scenario['fluid_type']=='steam' else 'std m³/h'}\n"
             f"Inlet Pressure (P1): {scenario['p1']:.2f} bar a\n"
             f"Outlet Pressure (P2): {scenario['p2']:.2f} bar a\n"
-            f"Pressure Drop (Delta P): {scenario['p1'] - scenario['p2']:.2f} bar\n"
+            f"Pressure Drop (ΔP): {scenario['p1'] - scenario['p2']:.2f} bar\n"
             f"Temperature: {scenario['temp']}°C\n"
         )
         
-        if scenario['fluid_type'] == 'liquid':
+        if scenario["fluid_type"] == "liquid":
             calc_text += (
                 f"Specific Gravity: {scenario['sg']:.3f}\n"
                 f"Viscosity: {scenario['visc']} cSt\n"
                 f"Vapor Pressure: {scenario['pv']:.4f} bar a\n"
                 f"Cavitation Status: {cavitation_info[i]}\n"
             )
-        elif scenario['fluid_type'] == 'gas':
+        elif scenario["fluid_type"] == "gas":
             calc_text += (
                 f"Specific Gravity (air=1): {scenario['sg']:.3f}\n"
                 f"Specific Heat Ratio (k): {scenario['k']:.3f}\n"
             )
         else:  # steam
             calc_text += (
-                f"Density: {scenario['rho']:.3f} kg/m3\n"
+                f"Density: {scenario['rho']:.3f} kg/m³\n"
                 f"Specific Heat Ratio (k): {scenario['k']:.3f}\n"
             )
-        
-        actual_cv = valve.get_cv_at_opening(op_points[i])
-        margin = (actual_cv / req_cvs[i] - 1) * 100 if req_cvs[i] > 0 else 0
         
         calc_text += (
             f"Pipe Diameter: {scenario['pipe_d']} in\n"
@@ -509,12 +544,21 @@ def generate_pdf_report(scenarios, valve, op_points, req_cvs, warnings, cavitati
         pdf.multi_cell(0, 5, calc_text)
     
     # Add the Cv curve plot if available
-    if plot_path and os.path.exists(plot_path):
+    if plot_bytes:
         pdf.chapter_title('Valve Cv Characteristic Curve')
-        pdf.image(plot_path, x=10, w=180)
+        temp_plot_path = "temp_plot.png"
+        with open(temp_plot_path, "wb") as f:
+            f.write(plot_bytes)
+        try:
+            pdf.image(temp_plot_path, x=10, w=180)
+            os.remove(temp_plot_path)
+        except Exception as e:
+            pdf.cell(0, 10, f"Failed to insert plot: {str(e)}", 0, 1)
     
-    # Generate PDF in memory and return bytes
-    pdf_bytes = pdf.output(dest='S').encode('latin-1')
+    # Save the PDF to a BytesIO object
+    pdf_bytes = BytesIO()
+    pdf.output(pdf_bytes)
+    pdf_bytes.seek(0)
     return pdf_bytes
 
 # ========================
@@ -806,7 +850,7 @@ def scenario_input_form(scenario_num, scenario_data=None):
         "pipe_d": pipe_d
     }
 
-def plot_cv_curve(valve, op_points, req_cvs, scenario_names):
+def plot_cv_curve(valve, op_points, req_cvs, theoretical_cvs, scenario_names):
     """Plot the Cv curve of the selected valve with operating points"""
     # Generate Cv curve data
     openings = list(range(0, 101, 5))
@@ -825,8 +869,10 @@ def plot_cv_curve(valve, op_points, req_cvs, scenario_names):
     )
     
     # Plot operating points
-    for i, (op, req_cv) in enumerate(zip(op_points, req_cvs)):
+    for i, (op, req_cv, theoretical_cv) in enumerate(zip(op_points, req_cvs, theoretical_cvs)):
         actual_cv = valve.get_cv_at_opening(op)
+        
+        # Operating point marker
         fig.add_trace(go.Scatter(
             x=[op], 
             y=[actual_cv], 
@@ -837,25 +883,48 @@ def plot_cv_curve(valve, op_points, req_cvs, scenario_names):
             textposition="top center"
         ))
         
-        # Add horizontal line for required Cv
+        # Horizontal line for corrected Cv
         fig.add_trace(go.Scatter(
             x=[0, 100],
             y=[req_cv, req_cv],
             mode='lines',
             line=dict(color='red', dash='dash', width=1),
-            name=f'Req Cv S{i+1}'
+            name=f'Corrected Cv S{i+1}',
+            showlegend=False
+        ))
+        
+        # Horizontal line for theoretical Cv
+        fig.add_trace(go.Scatter(
+            x=[0, 100],
+            y=[theoretical_cv, theoretical_cv],
+            mode='lines',
+            line=dict(color='green', dash='dot', width=1),
+            name=f'Theoretical Cv S{i+1}',
+            showlegend=False
         ))
     
     # Add annotations for required Cv values
-    for i, req_cv in enumerate(req_cvs):
+    for i, (req_cv, theoretical_cv) in enumerate(zip(req_cvs, theoretical_cvs)):
         fig.add_annotation(
             x=100,
             y=req_cv,
-            text=f'Req S{i+1}: {req_cv:.1f}',
+            text=f'Corrected S{i+1}: {req_cv:.1f}',
             showarrow=False,
             xshift=-10,
-            yshift=0,
-            align='right'
+            yshift=10,
+            align='right',
+            font=dict(color='red')
+        )
+        
+        fig.add_annotation(
+            x=100,
+            y=theoretical_cv,
+            text=f'Theoretical S{i+1}: {theoretical_cv:.1f}',
+            showarrow=False,
+            xshift=-10,
+            yshift=-10,
+            align='right',
+            font=dict(color='green')
         )
     
     # Set layout
@@ -901,9 +970,12 @@ def main():
         initial_sidebar_state="expanded"
     )
     
-    # Custom CSS
+    # Custom CSS with larger font size
     st.markdown("""
         <style>
+        html {
+            font-size: 18px;
+        }
         .stApp {
             background-color: #f0f2f6;
         }
@@ -917,6 +989,7 @@ def main():
             height: 50px;
             padding: 15px 25px;
             border-radius: 10px 10px 0 0;
+            font-size: 18px;
         }
         .stTabs [aria-selected="true"] {
             background-color: #1f77b4;
@@ -925,6 +998,7 @@ def main():
         .stButton button {
             width: 100%;
             font-weight: bold;
+            font-size: 18px;
         }
         .result-card {
             background-color: white;
@@ -932,10 +1006,19 @@ def main():
             padding: 15px;
             margin-bottom: 15px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            font-size: 18px;
         }
         .warning-card {
             background-color: #fff3cd;
             border-left: 5px solid #ffc107;
+        }
+        .success-card {
+            background-color: #d4edda;
+            border-left: 5px solid #28a745;
+        }
+        .danger-card {
+            background-color: #f8d7da;
+            border-left: 5px solid #dc3545;
         }
         .logo-container {
             display: flex;
@@ -966,6 +1049,15 @@ def main():
             background: rgba(0,0,0,0.5);
             z-index: 999;
         }
+        .stMetric {
+            font-size: 20px !important;
+        }
+        .stNumberInput, .stTextInput, .stSelectbox {
+            font-size: 18px;
+        }
+        .stMarkdown {
+            font-size: 18px;
+        }
         </style>
     """, unsafe_allow_html=True)
     
@@ -982,6 +1074,8 @@ def main():
         st.session_state.show_simulation = False
     if 'show_3d_viewer' not in st.session_state:
         st.session_state.show_3d_viewer = False
+    if 'cv_details' not in st.session_state:
+        st.session_state.cv_details = {}
     
     # App title
     col1, col2 = st.columns([1, 4])
@@ -1093,8 +1187,10 @@ def main():
         # Calculate opening for each scenario
         operating_points = []
         required_cvs = []
+        theoretical_cvs = []
         warnings = []
         cavitation_info = []
+        cv_details = []
         
         for scenario in scenarios:
             # Get pipe diameter and calculate Fp
@@ -1103,7 +1199,13 @@ def main():
             
             # Calculate required Cv
             if scenario["fluid_type"] == "liquid":
-                cv_req = cv_liquid(
+                # Calculate viscosity at temperature
+                if scenario.get('fluid_library') == "Water":
+                    scenario["visc"] = calculate_kinematic_viscosity("water", scenario["temp"])
+                elif scenario.get('fluid_library') in ["Light Oil", "Heavy Oil"]:
+                    scenario["visc"] = calculate_kinematic_viscosity("oil", scenario["temp"])
+                
+                cv_req, details = cv_liquid(
                     flow=scenario["flow"],
                     p1=scenario["p1"],
                     p2=scenario["p2"],
@@ -1115,14 +1217,26 @@ def main():
                     fp=fp
                 )
                 
+                # Store theoretical Cv
+                theoretical_cvs.append(details['theoretical_cv'])
+                
                 # Check for cavitation
                 choked, sigma, km, cav_msg = check_cavitation(
                     scenario["p1"], scenario["p2"], scenario["pv"], selected_valve.fl
                 )
                 cavitation_info.append(cav_msg)
                 
+                # Add to details
+                details['sigma'] = sigma
+                details['km'] = km
+                cv_details.append(details)
+                
             elif scenario["fluid_type"] == "gas":
-                cv_req = cv_gas(
+                # Calculate density at temperature and pressure
+                if scenario.get('fluid_library') == "Air":
+                    scenario["sg"] = calculate_density("air", scenario["temp"], scenario["p1"]) / AIR_DENSITY_0C
+                
+                cv_req, details = cv_gas(
                     flow=scenario["flow"],
                     p1=scenario["p1"],
                     p2=scenario["p2"],
@@ -1132,9 +1246,16 @@ def main():
                     xt=selected_valve.xt,
                     fp=fp
                 )
+                theoretical_cvs.append(details['theoretical_cv'])
                 cavitation_info.append("N/A for gas")
+                cv_details.append(details)
+                
             else:  # steam
-                cv_req = cv_steam(
+                # Calculate density if not provided
+                if scenario["rho"] <= 0.1:
+                    scenario["rho"] = calculate_density("steam", scenario["temp"], scenario["p1"])
+                
+                cv_req, details = cv_steam(
                     flow=scenario["flow"],
                     p1=scenario["p1"],
                     p2=scenario["p2"],
@@ -1143,7 +1264,9 @@ def main():
                     xt=selected_valve.xt,
                     fp=fp
                 )
+                theoretical_cvs.append(details['theoretical_cv'])
                 cavitation_info.append("N/A for steam")
+                cv_details.append(details)
             
             required_cvs.append(cv_req)
             
@@ -1170,9 +1293,11 @@ def main():
             "valve": selected_valve,
             "op_points": operating_points,
             "req_cvs": required_cvs,
+            "theoretical_cvs": theoretical_cvs,
             "warnings": warnings,
             "cavitation_info": cavitation_info,
-            "scenario_names": [s["name"] for s in scenarios]
+            "scenario_names": [s["name"] for s in scenarios],
+            "cv_details": cv_details
         }
     
     # Results tab
@@ -1187,6 +1312,7 @@ def main():
                 valve, 
                 results["op_points"], 
                 results["req_cvs"],
+                results["theoretical_cvs"],
                 results["scenario_names"]
             )
             st.plotly_chart(fig, use_container_width=True)
@@ -1198,6 +1324,11 @@ def main():
                 actual_cv = valve.get_cv_at_opening(results["op_points"][i])
                 margin = (actual_cv / results["req_cvs"][i] - 1) * 100 if results["req_cvs"][i] > 0 else 0
                 
+                # Determine status card
+                status = "success-card" if 20 <= results["op_points"][i] <= 80 else "warning-card"
+                if margin < 0:
+                    status = "danger-card"
+                
                 # Warning messages
                 warn_msgs = []
                 if results["warnings"][i]:
@@ -1206,18 +1337,21 @@ def main():
                     warn_msgs.append(results["cavitation_info"][i])
                 warn_text = ", ".join(warn_msgs)
                 
-                results_data.append({
-                    "Scenario": scenario["name"],
-                    "Req Cv": f"{results['req_cvs'][i]:.1f}",
-                    "Valve Size": f"{valve.size}\"",
-                    "Opening %": f"{results['op_points'][i]:.1f}%",
-                    "Actual Cv": f"{actual_cv:.1f}",
-                    "Margin %": f"{margin:.1f}%",
-                    "Warnings": warn_text
-                })
-            
-            results_df = pd.DataFrame(results_data)
-            st.dataframe(results_df, hide_index=True)
+                with st.container():
+                    st.markdown(f"<div class='result-card {status}'>", unsafe_allow_html=True)
+                    
+                    cols = st.columns([1.8, 1, 1, 1, 1, 1, 1, 1.5])
+                    cols[0].markdown(f"**{scenario['name']}**")
+                    cols[1].metric("Req Cv", f"{results['req_cvs'][i]:.1f}")
+                    cols[2].metric("Theo Cv", f"{results['theoretical_cvs'][i]:.2f}")
+                    cols[3].metric("Valve Cv", f"{valve.get_cv_at_opening(results['op_points'][i]):.1f}")
+                    cols[4].metric("Valve Size", f"{valve.size}\"")
+                    cols[5].metric("Opening", f"{results['op_points'][i]:.1f}%")
+                    cols[6].metric("Margin", f"{margin:.1f}%", 
+                                  delta_color="inverse" if margin < 0 else "normal")
+                    cols[7].markdown(f"**{warn_text}**")
+                    
+                    st.markdown("</div>", unsafe_allow_html=True)
             
             # Detailed results
             st.subheader("Detailed Results")
@@ -1251,10 +1385,25 @@ def main():
                         st.markdown(f"- Pipe Diameter: {scenario['pipe_d']} in")
                     
                     st.markdown("**Sizing Results**")
-                    st.markdown(f"- Required Cv: {results['req_cvs'][i]:.1f}")
+                    st.markdown(f"- Theoretical Cv: {results['theoretical_cvs'][i]:.1f}")
+                    st.markdown(f"- Corrected Cv: {results['req_cvs'][i]:.1f}")
                     st.markdown(f"- Operating Point: {results['op_points'][i]:.1f}% open")
                     st.markdown(f"- Actual Cv at Operating Point: {valve.get_cv_at_opening(results['op_points'][i]):.1f}")
-                    st.markdown(f"- Margin: {((valve.get_cv_at_opening(results['op_points'][i]) / results['req_cvs'][i] - 1) )* 100:.1f}%")
+                    
+                    margin = ((valve.get_cv_at_opening(results['op_points'][i]) / results['req_cvs'][i] - 1) )* 100
+                    st.markdown(f"- Margin: {margin:.1f}%")
+                    
+                    # Show correction factors
+                    details = results['cv_details'][i]
+                    st.markdown("**Correction Factors**")
+                    if scenario["fluid_type"] == "liquid":
+                        st.markdown(f"- Piping Factor (Fp): {details['fp']:.3f}")
+                        st.markdown(f"- Viscosity Factor (Fr): {details['fr']:.3f}")
+                        st.markdown(f"- Reynolds Number: {details['reynolds']:.0f}")
+                        st.markdown(f"- Cavitation Sigma: {details['sigma']:.2f}")
+                    else:
+                        st.markdown(f"- Piping Factor (Fp): {details['fp']:.3f}")
+                        st.markdown(f"- Expansion Factor (Y): {details['expansion_factor']:.3f}")
                     
                     # Warnings
                     if results['warnings'][i] or "risk" in results['cavitation_info'][i]:
@@ -1281,26 +1430,25 @@ def main():
             st.error("Please calculate results before exporting.")
             st.stop()
         
-        # Save plot to temp file
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmpfile:
+        try:
+            # Generate plot as bytes
             fig = plot_cv_curve(
                 st.session_state.results["valve"], 
                 st.session_state.results["op_points"], 
                 st.session_state.results["req_cvs"],
+                st.session_state.results["theoretical_cvs"],
                 st.session_state.results["scenario_names"]
             )
-            fig.write_image(tmpfile.name)
-            plot_path = tmpfile.name
-        
-        # Determine logo path
-        logo_path = None
-        if st.session_state.logo_path and os.path.exists(st.session_state.logo_path):
-            logo_path = st.session_state.logo_path
-        elif os.path.exists("logo.png"):
-            logo_path = "logo.png"
-        
-        # Generate PDF bytes
-        try:
+            plot_bytes = fig.to_image(format="png")
+            
+            # Determine logo path
+            logo_path = None
+            if st.session_state.logo_path and os.path.exists(st.session_state.logo_path):
+                logo_path = st.session_state.logo_path
+            elif os.path.exists("logo.png"):
+                logo_path = "logo.png"
+            
+            # Generate PDF
             pdf_bytes = generate_pdf_report(
                 st.session_state.scenarios,
                 st.session_state.results["valve"],
@@ -1308,29 +1456,22 @@ def main():
                 st.session_state.results["req_cvs"],
                 st.session_state.results["warnings"],
                 st.session_state.results["cavitation_info"],
-                plot_path,
+                plot_bytes,
                 logo_path
             )
-        finally:
-            # Clean up temporary file
-            try:
-                os.remove(plot_path)
-            except:
-                pass
-        
-        # Create a timestamp for the filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"valve_sizing_report_{timestamp}.pdf"
-        
-        # Download button
-        st.sidebar.download_button(
-            label="Download PDF Report",
-            data=pdf_bytes,
-            file_name=filename,
-            mime="application/pdf"
-        )
-        
-        st.sidebar.success("PDF report generated successfully!")
+            
+            # Download button
+            st.sidebar.download_button(
+                label="Download PDF Report",
+                data=pdf_bytes,
+                file_name=f"valve_sizing_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                mime="application/pdf"
+            )
+            st.sidebar.success("PDF report generated successfully!")
+            
+        except Exception as e:
+            st.sidebar.error(f"PDF generation failed: {str(e)}")
+            st.sidebar.text(traceback.format_exc())
 
 if __name__ == "__main__":
     main()
