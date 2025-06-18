@@ -510,7 +510,7 @@ def generate_pdf_report(scenarios, valve, op_points, req_cvs, warnings, cavitati
             f"{'m³/h' if scenario['fluid_type']=='liquid' else 'kg/h' if scenario['fluid_type']=='steam' else 'std m³/h'}\n"
             f"Inlet Pressure (P1): {scenario['p1']:.2f} bar a\n"
             f"Outlet Pressure (P2): {scenario['p2']:.2f} bar a\n"
-            f"Pressure Drop (ΔP): {scenario['p1'] - scenario['p2']:.2f} bar\n"
+            f"Pressure Drop (dP): {scenario['p1'] - scenario['p2']:.2f} bar\n"
             f"Temperature: {scenario['temp']}°C\n"
         )
         
@@ -1366,7 +1366,7 @@ def main():
                                     f"{'m³/h' if scenario['fluid_type']=='liquid' else 'kg/h' if scenario['fluid_type']=='steam' else 'std m³/h'}")
                         st.markdown(f"- Inlet Pressure (P1): {scenario['p1']:.2f} bar a")
                         st.markdown(f"- Outlet Pressure (P2): {scenario['p2']:.2f} bar a")
-                        st.markdown(f"- Pressure Drop (ΔP): {scenario['p1'] - scenario['p2']:.2f} bar")
+                        st.markdown(f"- Pressure Drop (dP): {scenario['p1'] - scenario['p2']:.2f} bar")
                         st.markdown(f"- Temperature: {scenario['temp']}°C")
                         
                     with col2:
