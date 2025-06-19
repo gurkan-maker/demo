@@ -257,9 +257,9 @@ def cv_liquid(flow: float, p1: float, p2: float, sg: float, fl: float, pv: float
     
     # Theoretical Cv calculation (without corrections)
     if dp < dp_max:  # Non-choked flow
-        theoretical_cv = flow * math.sqrt(sg / dp)
+        theoretical_cv = (flow / N1) * math.sqrt(sg / dp)
     else:  # Choked flow
-        theoretical_cv = flow * math.sqrt(sg) / (fl * math.sqrt(p1 - pv))
+        theoretical_cv = (flow / N1) * math.sqrt(sg) / (fl * math.sqrt(p1 - ff * pv))
     
     # Apply piping factor
     cv_after_fp = theoretical_cv / fp
