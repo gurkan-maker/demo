@@ -25,14 +25,15 @@ KPA_TO_BAR = 0.01
 C_TO_K = 273.15   # Celsius to Kelvin
 G_CONST = 9.80665  # Gravity constant (m/s²)
 
-# ISA Constants (IEC 60534-2-1)
-N1 = 0.0865       # For flow in m³/h, pressure in bar, density in kg/m³
-N2 = 0.00214      # For flow in kg/h, pressure in bar, density in kg/m³
-N5 = 2.73         # For mass flow in kg/h, pressure in bar
-N6 = 2.73         # For steam flow
-N7 = 4.17         # For flow in kg/h, pressure in kPa
-N8 = 0.948        # For flow in kg/h, pressure in bar
-N9 = 1300         # For gas flow in m³/h at standard conditions
+CONSTANTS = {
+    "N1": {"gpm, psia": 1.00, "m³/h, bar": 0.865, "m³/h, kPa": 0.0865},
+    "N2": {"mm": 0.00214, "inch": 890},
+    "N5": {"mm": 0.00241, "inch": 1000},
+    "N6": {"kg/h, kPa, kg/m³": 2.73, "kg/h, bar, kg/m³": 27.3, "lb/h, psia, lb/ft³": 63.3},
+    "N7": {"m³/h, kPa, K (standard)": 4.17, "m³/h, bar, K (standard)": 417, "scfh, psia, R": 1360},
+    "N8": {"kg/h, bar, K": 94.8, "lb/h, psia, R": 19.3},
+    "N9": {"m³/h, kPa, K (standard)": 22.4, "m³/h, bar, K (standard)": 2240, "scfh, psia, R": 7320}
+}
 
 # Fluid properties (for simplified calculations)
 WATER_DENSITY_4C = 999.97  # kg/m³
